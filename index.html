@@ -1038,7 +1038,7 @@
 
         const todayDate = dbSettings.visitDate;
 
-        // Check for duplicate CCCD or Phone number on the same day (todayDate)
+        // 1. Kiểm tra trùng lặp CCCD
         const duplicateCccd = dbVisits.find(v => v.date === todayDate && v.status !== 'cancelled' && v.visitorCccd === vCccd);
         if (duplicateCccd) {
           showNotification(`Cảnh báo: Số CCCD (${vCccd}) đã được đăng ký thăm gặp trong ngày hôm nay!`, 'error');
@@ -1046,6 +1046,7 @@
           return;
         }
 
+        // 2. Kiểm tra trùng lặp Số điện thoại
         const duplicatePhone = dbVisits.find(v => v.date === todayDate && v.status !== 'cancelled' && v.visitorPhone === normalizedPhone);
         if (duplicatePhone) {
           showNotification(`Cảnh báo: Số điện thoại (${normalizedPhone}) đã được đăng ký thăm gặp trong ngày hôm nay!`, 'error');
@@ -1053,18 +1054,27 @@
           return;
         }
 
-        // Generate auto STT (3-digit format: 001 - 999)
-        // Tìm số thứ tự lớn nhất hiện tại trong ngày để cộng thêm 1, tránh trùng lặp
-        const todayVisits = dbVisits.filter(v => v.date === todayDate);
+        // 3. (MỚI THÊM) Kiểm tra: Mỗi can phạm chỉ được 1 người thăm/ngày
+        const duplicatePrisonerVisit = dbVisits.find(v => v.date === todayDate && v.status !== 'cancelled' && v.prisonerName === pName);
+        if (duplicatePrisonerVisit) {
+          showNotification(`Cảnh báo: Can phạm nhân (${pName}) đã có thân nhân đăng ký thăm gặp đợt này! Mỗi can phạm chỉ được 1 lượt thăm/ngày.`, 'error');
+          showLoading("", false);
+          return;
+        }
+
+        // 4. (SỬA LỖI STT) Tính số thứ tự tăng dần dựa trên STT lớn nhất hiện có, không phụ thuộc máy chủ
         let maxStt = 0;
-        todayVisits.forEach(v => {
-          const currentStt = parseInt(v.stt, 10);
-          if (!isNaN(currentStt) && currentStt > maxStt) {
-            maxStt = currentStt;
+        dbVisits.forEach(v => {
+          if (v.date === todayDate) {
+            const currentStt = parseInt(v.stt, 10);
+            if (!isNaN(currentStt) && currentStt > maxStt) {
+              maxStt = currentStt;
+            }
           }
         });
         const finalStt = String(maxStt + 1).padStart(3, '0');
 
+        // Tạo hồ sơ thăm gặp
         const newVisit = {
           id: 'v_' + Date.now(),
           stt: finalStt,
@@ -1083,7 +1093,7 @@
         };
 
         if (dbSettings.sheetUrl) {
-          // Send to Google Sheet
+          // Gửi dữ liệu lên Google Sheets
           const response = await fetch(dbSettings.sheetUrl, {
             method: 'POST',
             body: JSON.stringify({
@@ -1094,19 +1104,13 @@
           
           if (response.ok) {
             const resultData = await response.json();
-            if (resultData.result === 'success') {
-              // Successfully saved to Google Sheet, pad the returned STT to 3 digits
-              let gasStt = resultData.stt || finalStt;
-              if (gasStt && !isNaN(gasStt)) {
-                gasStt = String(parseInt(gasStt, 10)).padStart(3, '0');
-              }
-              newVisit.stt = gasStt;
-            } else {
-              // Google Sheets returned an error (e.g. duplicate CCCD or phone)
+            if (resultData.result !== 'success') {
               showNotification(resultData.message || "Không thể lưu dữ liệu lên đám mây!", "error");
               showLoading("", false);
               return;
             }
+            // Đã xóa phần code lấy STT từ Server ở đây để tránh bị lỗi ghi đè thành 001. 
+            // Hệ thống giờ sẽ tin tưởng tuyệt đối vào STT (finalStt) đã tạo ở bước 4.
           } else {
             showNotification("Không thể kết nối với máy chủ Google Sheets!", "error");
             showLoading("", false);
@@ -1114,7 +1118,7 @@
           }
         }
 
-        // Always save to local cache for offline resilient operations
+        // Lưu vào bộ nhớ cục bộ
         dbVisits.push(newVisit);
         localStorage.setItem('tg1_visits', JSON.stringify(dbVisits));
 
