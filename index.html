@@ -338,7 +338,7 @@
           <!-- STT Box -->
           <div class="bg-indigo-50 border-2 border-indigo-600 rounded-2xl py-3 px-4 text-center max-w-[200px] mx-auto shadow-inner">
             <p class="text-[9px] font-black tracking-wider text-indigo-900 uppercase">SỐ THỨ TỰ VÀO CỔNG</p>
-            <p id="ticket-stt" class="text-5xl font-black text-indigo-700 mt-1">01</p>
+            <p id="ticket-stt" class="text-5xl font-black text-indigo-700 mt-1">001</p>
           </div>
 
           <!-- Perforated separating dashed line -->
@@ -545,7 +545,8 @@
         Xác Minh Danh Tính Cán Bộ
       </h3>
       <p class="text-[11px] text-slate-400 text-center mt-1">
-        Nhập mã PIN của bạn để truy cập Bảng quản lý gác (Mã PIN mặc định: <span id="lbl-pin-default" class="font-bold text-indigo-600">113</span>)
+        Nhập mã PIN của bạn để truy cập Bảng quản lý gác (Bảo mật)
+        <span id="lbl-pin-default" class="hidden"></span>
       </p>
 
       <form onsubmit="handlePinSubmit(event)" class="mt-5 space-y-4">
@@ -636,7 +637,7 @@
     let dbPrisoners = [];
     let dbSettings = {
       visitDate: '30-06-2026',
-      pinCode: '113',
+      pinCode: '111',
       sheetUrl: '' // Enter Google Apps Script webapp URL here
     };
 
@@ -652,7 +653,7 @@
       visits: [
         {
           id: "v1",
-          stt: "01",
+          stt: "001",
           visitorName: "NGUYỄN THỊ MAI",
           visitorGender: "Nữ",
           visitorDob: "15-09-1972",
@@ -668,7 +669,7 @@
         },
         {
           id: "v2",
-          stt: "02",
+          stt: "002",
           visitorName: "TRẦN VĂN HÙNG",
           visitorGender: "Nam",
           visitorDob: "04-03-1985",
@@ -691,6 +692,11 @@
         localStorage.setItem('tg1_settings', JSON.stringify(dbSettings));
       } else {
         dbSettings = JSON.parse(localStorage.getItem('tg1_settings'));
+        // Automatically migrate old 113 PIN code to 111
+        if (dbSettings.pinCode === '113') {
+          dbSettings.pinCode = '111';
+          localStorage.setItem('tg1_settings', JSON.stringify(dbSettings));
+        }
       }
 
       if (!localStorage.getItem('tg1_prisoners')) {
@@ -1017,11 +1023,27 @@
           return;
         }
 
-        // Generate auto STT
         const todayDate = dbSettings.visitDate;
+
+        // Check for duplicate CCCD or Phone number on the same day (todayDate)
+        const duplicateCccd = dbVisits.find(v => v.date === todayDate && v.status !== 'cancelled' && v.visitorCccd === vCccd);
+        if (duplicateCccd) {
+          showNotification(`Cảnh báo: Số CCCD (${vCccd}) đã được đăng ký thăm gặp trong ngày hôm nay!`, 'error');
+          showLoading("", false);
+          return;
+        }
+
+        const duplicatePhone = dbVisits.find(v => v.date === todayDate && v.status !== 'cancelled' && v.visitorPhone === normalizedPhone);
+        if (duplicatePhone) {
+          showNotification(`Cảnh báo: Số điện thoại (${normalizedPhone}) đã được đăng ký thăm gặp trong ngày hôm nay!`, 'error');
+          showLoading("", false);
+          return;
+        }
+
+        // Generate auto STT (3-digit format: 001 - 999)
         const totalTodayVisits = dbVisits.filter(v => v.date === todayDate && v.status !== 'cancelled').length;
         const sttInt = totalTodayVisits + 1;
-        const finalStt = sttInt < 10 ? '0' + sttInt : '' + sttInt;
+        const finalStt = String(sttInt).padStart(3, '0');
 
         const newVisit = {
           id: 'v_' + Date.now(),
@@ -1053,9 +1075,22 @@
           if (response.ok) {
             const resultData = await response.json();
             if (resultData.result === 'success') {
-              // Successfully saved to Google Sheet
-              newVisit.stt = resultData.stt || finalStt;
+              // Successfully saved to Google Sheet, pad the returned STT to 3 digits
+              let gasStt = resultData.stt || finalStt;
+              if (gasStt && !isNaN(gasStt)) {
+                gasStt = String(parseInt(gasStt, 10)).padStart(3, '0');
+              }
+              newVisit.stt = gasStt;
+            } else {
+              // Google Sheets returned an error (e.g. duplicate CCCD or phone)
+              showNotification(resultData.message || "Không thể lưu dữ liệu lên đám mây!", "error");
+              showLoading("", false);
+              return;
             }
+          } else {
+            showNotification("Không thể kết nối với máy chủ Google Sheets!", "error");
+            showLoading("", false);
+            return;
           }
         }
 
