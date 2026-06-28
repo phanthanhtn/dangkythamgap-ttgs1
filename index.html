@@ -869,8 +869,21 @@
         return;
       }
       selectedPrisoner = prisoner;
+      
+      // Bộ lọc làm sạch ngày sinh: Cắt bỏ giờ, phút, giây nếu dữ liệu bị lỗi
+      let cleanDob = prisoner.dob;
+      if (cleanDob && (cleanDob.includes('T') || (cleanDob.includes('-') && cleanDob.length > 10))) {
+         const dateObj = new Date(cleanDob);
+         if (!isNaN(dateObj.getTime())) {
+             const day = String(dateObj.getDate()).padStart(2, '0');
+             const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+             const year = dateObj.getFullYear();
+             cleanDob = day + '-' + month + '-' + year;
+         }
+      }
+
       document.getElementById('prisoner-name').value = prisoner.name;
-      document.getElementById('prisoner-dob').value = prisoner.dob;
+      document.getElementById('prisoner-dob').value = cleanDob;
       document.getElementById('prisoner-address').value = prisoner.address;
       
       document.getElementById('prisoner-badge').classList.remove('hidden');
@@ -1041,9 +1054,16 @@
         }
 
         // Generate auto STT (3-digit format: 001 - 999)
-        const totalTodayVisits = dbVisits.filter(v => v.date === todayDate && v.status !== 'cancelled').length;
-        const sttInt = totalTodayVisits + 1;
-        const finalStt = String(sttInt).padStart(3, '0');
+        // Tìm số thứ tự lớn nhất hiện tại trong ngày để cộng thêm 1, tránh trùng lặp
+        const todayVisits = dbVisits.filter(v => v.date === todayDate);
+        let maxStt = 0;
+        todayVisits.forEach(v => {
+          const currentStt = parseInt(v.stt, 10);
+          if (!isNaN(currentStt) && currentStt > maxStt) {
+            maxStt = currentStt;
+          }
+        });
+        const finalStt = String(maxStt + 1).padStart(3, '0');
 
         const newVisit = {
           id: 'v_' + Date.now(),
